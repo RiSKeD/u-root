@@ -37,11 +37,6 @@ var (
 	timeFlag      = flag.Bool("time", false, "show time of last modification of any file or directory")
 )
 
-type DirProperties struct {
-	modtime        time.Time
-	size           int64
-	fileProperties []FileProperties
-}
 type FileProperties struct {
 	path    string
 	modtime time.Time
@@ -76,7 +71,7 @@ const (
 	YYYYMMDDHHMM = "2006-01-02 15:04"
 )
 
-//
+// Walk the passed paths and return the disk usage of directories and/or files in accordance to passed flags.
 func du(w io.Writer, paths []string) error {
 
 	if *summarize && *all {
@@ -108,71 +103,70 @@ func du(w io.Writer, paths []string) error {
 			return fmt.Errorf("du: %v", err)
 		}
 
-		if dirPropertiesOfPath != nil {
+		if len(dirPropertiesOfPath) != 0 {
 			// sort directory paths in reverse order (TODO: fix order of subdirectories)
-			sort.SliceStable(*dirPropertiesOfPath, func(i, j int) bool {
-				return !sort.StringsAreSorted([]string{(*dirPropertiesOfPath)[i].path, (*dirPropertiesOfPath)[j].path})
+			sort.SliceStable(dirPropertiesOfPath, func(i, j int) bool {
+				return !sort.StringsAreSorted([]string{(dirPropertiesOfPath)[i].path, (dirPropertiesOfPath)[j].path})
 			})
 
-			logOutput = append(logOutput, *dirPropertiesOfPath...)
+			logOutput = append(logOutput, dirPropertiesOfPath...)
 
-			if filePropertiesOfPath != nil {
+			if len(filePropertiesOfPath) != 0 {
 				// add FileProperties of files in a directory to map of all paths
-				for dirPath, filePropertiesOfDir := range *filePropertiesOfPath {
+				for dirPath, filePropertiesOfDir := range filePropertiesOfPath {
 					filesOfDirsList[dirPath] = append(filesOfDirsList[dirPath], filePropertiesOfDir...)
 				}
 			}
 		}
 	}
 
-	if len(logOutput) == 0 {
-		return nil
-	}
+	if len(logOutput) != 0 {
 
-	// update sizes of individual directories
-	for idx := range logOutput {
-		for _, file := range filesOfDirsList[logOutput[idx].path] {
-			logOutput[idx].size += file.size
-		}
-	}
-
-	// propagate sizes to parent directories
-	for idx, parent := range logOutput {
-		for _, fp := range logOutput {
-			if parent.path == filepath.Dir(fp.path) && parent.path != fp.path {
-				logOutput[idx].size += fp.size
+		// update disk usage of individual directories
+		for idx := range logOutput {
+			for _, file := range filesOfDirsList[logOutput[idx].path] {
+				logOutput[idx].size += file.size
 			}
 		}
-	}
 
-	// if summarize flag is set, only print out directory sizes of the passed path arguments and no subdirectories
-	if *summarize {
-		var pathOutput []FileProperties
-		for _, path := range processablePaths {
-			for idx, _ := range logOutput {
-				if path == logOutput[idx].path {
-					pathOutput = append(pathOutput, logOutput[idx])
+		// propagate disk usage up to parent directories
+		for idx, parent := range logOutput {
+			for _, fp := range logOutput {
+				if parent.path == filepath.Dir(fp.path) && parent.path != fp.path {
+					logOutput[idx].size += fp.size
 				}
 			}
 		}
-		writeOutput(w, &pathOutput)
-		return nil
-	}
 
-	//add files to output if flag is set
-	var logOutputWithFiles []FileProperties
-	if *all {
-		for _, elem := range logOutput {
-			files := filesOfDirsList[elem.path]
-			logOutputWithFiles = append(logOutputWithFiles, files...)
-			logOutputWithFiles = append(logOutputWithFiles, elem)
+		// if summarize flag is set, only print out directory sizes of the passed path arguments and no subdirectories
+		if *summarize {
+			var pathOutput []FileProperties
+			for _, path := range processablePaths {
+				for idx := range logOutput {
+					if path == logOutput[idx].path {
+						pathOutput = append(pathOutput, logOutput[idx])
+					}
+				}
+			}
+			writeOutput(w, pathOutput)
+			return nil
 		}
-	} else {
-		logOutputWithFiles = logOutput
-	}
 
-	if len(logOutputWithFiles) > 0 {
-		writeOutput(w, &logOutputWithFiles)
+		//add files to output if flag is set
+		var logOutputWithFiles []FileProperties
+		if *all {
+			for _, elem := range logOutput {
+				files := filesOfDirsList[elem.path]
+				logOutputWithFiles = append(logOutputWithFiles, files...)
+				logOutputWithFiles = append(logOutputWithFiles, elem)
+			}
+		} else {
+			logOutputWithFiles = logOutput
+		}
+
+		if len(logOutputWithFiles) > 0 {
+			writeOutput(w, logOutputWithFiles)
+		}
 	}
 
 	return nil
@@ -230,12 +224,10 @@ func removeInvalidPaths(paths []string) ([]string, []error) {
 	return noneDupPaths, hadError
 }
 
-// walk path and return properties of directory and map of files inside the directory
-func processPath(w io.Writer, rootPath string) (*[]FileProperties, *map[string][]FileProperties, error) {
+// walk path and return path, last modified time and disk usage of directory and map of files inside the directory
+func processPath(w io.Writer, rootPath string) ([]FileProperties, map[string][]FileProperties, error) {
 	var dirProperties []FileProperties
 	filePropertiesOfDir := make(map[string][]FileProperties)
-
-	rootPath = filepath.Clean(rootPath)
 
 	info, err := os.Stat(rootPath)
 
@@ -255,7 +247,7 @@ func processPath(w io.Writer, rootPath string) (*[]FileProperties, *map[string][
 
 		fileSize := fsys.Blocks * fsys.Blksize >> 13
 
-		return &[]FileProperties{{rootPath, info.ModTime(), fileSize}}, nil, nil
+		return []FileProperties{{rootPath, info.ModTime(), fileSize}}, nil, nil
 	}
 
 	err = filepath.Walk(rootPath, func(path string, info fs.FileInfo, err error) error {
@@ -275,15 +267,15 @@ func processPath(w io.Writer, rootPath string) (*[]FileProperties, *map[string][
 
 		fileSize := fsys.Blocks * fsys.Blksize >> 13
 
-		if !info.Mode().IsRegular() && !info.IsDir() {
-			dirPath := filepath.Dir(path)
-			filePropertiesOfDir[dirPath] = append(filePropertiesOfDir[dirPath], FileProperties{path, info.ModTime(), fileSize})
-			return filepath.SkipDir
-		}
-
 		if info.IsDir() {
 			dirProperties = append(dirProperties, FileProperties{path, info.ModTime(), fileSize})
 			return nil
+		}
+
+		if !info.Mode().IsRegular() {
+			dirPath := filepath.Dir(path)
+			filePropertiesOfDir[dirPath] = append(filePropertiesOfDir[dirPath], FileProperties{path, info.ModTime(), fileSize})
+			return filepath.SkipDir
 		}
 
 		dirPath := filepath.Dir(path)
@@ -296,47 +288,48 @@ func processPath(w io.Writer, rootPath string) (*[]FileProperties, *map[string][
 		return nil, nil, fmt.Errorf("failed to access path %v\n", rootPath)
 	}
 
-	return &dirProperties, &filePropertiesOfDir, nil
+	return dirProperties, filePropertiesOfDir, nil
 }
 
-// writes output to passed io.Writer. if human-readable lag or time flag is set, format output sizes accordingly
-func writeOutput(w io.Writer, fileProperties *[]FileProperties) {
+// Writes output to passed io.Writer.
+// If the human-readable flag is set format output as a float + the correct unit size
+// If the time flag is set include the last-modified time stamp formatted
+func writeOutput(w io.Writer, fileProperties []FileProperties) {
 
-	var sizesAsFloats []float64
-	var sizesAsStrings []string
-	var sizesUnits []SizeUnit
-	maxLenghtSizes := 1
+	output := make(map[string]struct {
+		stringValue string
+		floatValue  float64
+		unit        SizeUnit
+	}, len(fileProperties))
+	maxLengthSizes := 1
 
-	for idx, properties := range *fileProperties {
-		sizeUnit := None
-		var size string
+	for idx := range fileProperties {
+		size := output[fileProperties[idx].path]
 		if *humanReadable {
-			sizeUnit = Kilobyte
-			sizesAsFloats = append(sizesAsFloats, float64(properties.size))
-			for sizesAsFloats[idx] > 1024 && sizeUnit < Gigabyte {
-				sizeUnit++
-				sizesAsFloats[idx] /= 1024
+			size.unit = Kilobyte
+			size.floatValue = float64(fileProperties[idx].size)
+			for size.floatValue > 1024 && size.unit < Gigabyte {
+				size.unit++
+				size.floatValue /= 1024
 			}
-			sizesAsFloats[idx] = math.Ceil(sizesAsFloats[idx]*10) / 10
-			size = fmt.Sprintf("%.1f", sizesAsFloats[idx])
-			size = strings.TrimSuffix(size, ".0")
+			size.floatValue = math.Ceil(size.floatValue*10) / 10
+			size.stringValue = strings.TrimSuffix(fmt.Sprintf("%.1f", size.floatValue), ".0")
 		} else {
-			size = fmt.Sprintf("%d", properties.size)
+			size.stringValue = fmt.Sprintf("%d", fileProperties[idx].size)
 		}
 
-		if len(size) > maxLenghtSizes {
-			maxLenghtSizes = len(size)
+		if len(size.stringValue) > maxLengthSizes {
+			maxLengthSizes = len(size.stringValue)
 		}
-		sizesAsStrings = append(sizesAsStrings, size)
-		sizesUnits = append(sizesUnits, sizeUnit)
+		output[fileProperties[idx].path] = size
 	}
 
-	for idx, properties := range *fileProperties {
-		sizesAsStrings[idx] = fmt.Sprintf("%-*v%v", maxLenghtSizes, sizesAsStrings[idx], sizesUnits[idx])
+	for _, properties := range fileProperties {
+
 		if !*timeFlag {
-			fmt.Fprintf(w, "%v\t%v\n", sizesAsStrings[idx], properties.path)
+			fmt.Fprintf(w, "%v%-*v\t%v\n", output[properties.path].stringValue, maxLengthSizes, output[properties.path].unit, properties.path)
 		} else {
-			fmt.Fprintf(w, "%v\t%v\t%v\n", sizesAsStrings[idx], properties.modtime.Format(YYYYMMDDHHMM), properties.path)
+			fmt.Fprintf(w, "%v%-*v\t%v\t%v\n", output[properties.path].stringValue, maxLengthSizes, output[properties.path].unit, properties.modtime.Format(YYYYMMDDHHMM), properties.path)
 		}
 	}
 
