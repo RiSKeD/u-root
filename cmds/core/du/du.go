@@ -37,6 +37,11 @@ var (
 	timeFlag      = flag.Bool("time", false, "show time of last modification of any file or directory")
 )
 
+type DirProperties struct {
+	modtime        time.Time
+	size           int64
+	fileProperties []FileProperties
+}
 type FileProperties struct {
 	path    string
 	modtime time.Time
@@ -86,7 +91,7 @@ func du(w io.Writer, paths []string) error {
 
 	if len(errs) > 0 {
 		for _, err := range errs {
-			fmt.Fprintf(w, "du: %v", err)
+			fmt.Fprintf(w, "du: %v\n", err)
 		}
 	}
 
@@ -185,16 +190,38 @@ func dedupStrings(list []string) []string {
 	return newList
 }
 
-// Remove duplicate or inaccessable paths. Duplicate occurences are either the same path or any of their subdirectories.
+// Return only nonduplicate, accessable and cleaned paths. Duplicate occurences are either the same path or any of their subdirectories.
 func removeInvalidPaths(paths []string) ([]string, []error) {
 	var cleanedPaths []string
 	var hadError []error
 
 	for _, path := range paths {
-		if absPath, err := filepath.Abs(path); err == nil {
-			cleanedPaths = append(cleanedPaths, filepath.Clean(absPath))
-		} else {
+		absPath, err := filepath.Abs(path)
+
+		if err != nil {
 			hadError = append(hadError, err)
+			continue
+		}
+
+		cleanedPath := filepath.Clean(absPath)
+		_, err = os.Stat(cleanedPath)
+
+		if err != nil {
+			hadError = append(hadError, err)
+			continue
+		}
+		cleanedPaths = append(cleanedPaths, cleanedPath)
+	}
+
+	for path1 := range cleanedPaths {
+		for path2 := range cleanedPaths {
+			if path1 != path2 {
+				if filepath.HasPrefix(cleanedPaths[path1], cleanedPaths[path2]) {
+					cleanedPaths[path1] = cleanedPaths[path2]
+				} else if filepath.HasPrefix(cleanedPaths[path2], cleanedPaths[path1]) {
+					cleanedPaths[path2] = cleanedPaths[path1]
+				}
+			}
 		}
 	}
 
