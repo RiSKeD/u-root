@@ -6,6 +6,7 @@ package cpio
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"reflect"
@@ -14,227 +15,6 @@ import (
 
 	"github.com/u-root/u-root/pkg/uio"
 )
-
-/*
-TODO(#935): This test should really compare against []Records, not the string
-formatted []Records.
-
-func TestSimple(t *testing.T) {
-	r := Newc.Reader(bytes.NewReader(testCPIO))
-	files, err := ReadAllRecords(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for i, f := range files {
-		if f.String() != testResult[i] {
-			t.Errorf("Value %d: got \n%s, want \n%s", i, f.String(), testResult[i])
-		}
-		t.Logf("Value %d: got \n%s, want \n%s", i, f.String(), testResult[i])
-	}
-}
-*/
-
-func TestWriteRead(t *testing.T) {
-	contents := []byte("LANAAAAAAAAAA")
-	rec := StaticRecord(contents, Info{
-		Ino:      1,
-		Mode:     syscall.S_IFREG | 2,
-		UID:      3,
-		GID:      4,
-		NLink:    5,
-		MTime:    6,
-		FileSize: 7,
-		Major:    8,
-		Minor:    9,
-		Rmajor:   10,
-		Rminor:   11,
-		Name:     "foobar",
-	})
-
-	buf := &bytes.Buffer{}
-	w := Newc.Writer(buf)
-	if err := w.WriteRecord(rec); err != nil {
-		t.Errorf("Could not write record %q: %v", rec.Name, err)
-	}
-
-	if err := WriteTrailer(w); err != nil {
-		t.Errorf("Could not write trailer: %v", err)
-	}
-
-	r := Newc.Reader(bytes.NewReader(buf.Bytes()))
-	rec2, err := r.ReadRecord()
-	if err != nil {
-		t.Errorf("Could not read record: %v", err)
-	}
-
-	if rec2.Info != rec.Info {
-		t.Errorf("Records not equal:\n%#v\n%#v", rec.Info, rec2.Info)
-	}
-
-	contents2, err := io.ReadAll(uio.Reader(rec2))
-	if err != nil {
-		t.Errorf("Could not read %q: %v", rec2.Name, err)
-	}
-
-	if !bytes.Equal(contents2, contents) {
-		t.Errorf("Read(%q) = %s, want %s", rec2.Name, string(contents2), contents)
-	}
-}
-
-func TestPipeWriteRead(t *testing.T) {
-	contents := []byte("ABCDEFG")
-	// N.B. It is important to have two records,
-	// it caught a problem with the first discard
-	// implementation.
-	records := []Record{
-		StaticRecord(contents, Info{
-			Ino:      1,
-			Mode:     syscall.S_IFREG | 2,
-			UID:      3,
-			GID:      4,
-			NLink:    5,
-			MTime:    6,
-			FileSize: 7,
-			Major:    8,
-			Minor:    9,
-			Rmajor:   10,
-			Rminor:   11,
-			Name:     "foobar",
-		}),
-		StaticRecord(contents[:5], Info{
-			Ino:      1,
-			Mode:     syscall.S_IFREG | 2,
-			UID:      3,
-			GID:      4,
-			NLink:    5,
-			MTime:    6,
-			FileSize: 5,
-			Major:    8,
-			Minor:    9,
-			Rmajor:   10,
-			Rminor:   11,
-			Name:     "farba",
-		}),
-	}
-
-	rp, wp, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	w := Newc.Writer(wp)
-	// We need a func here in case the pipe blocks the write.
-
-	go func() {
-		for _, rec := range records {
-			if err := w.WriteRecord(rec); err != nil {
-				t.Errorf("Could not write record %q: %v", rec.Name, err)
-			}
-		}
-
-		if err := WriteTrailer(w); err != nil {
-			t.Errorf("Could not write trailer: %v", err)
-		}
-	}()
-
-	Debug = t.Logf
-
-	rdr, err := Newc.NewFileReader(rp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range records {
-		rec, err := rdr.ReadRecord()
-		if err != nil {
-			t.Errorf("Could not read record: %v", err)
-		}
-
-		t.Logf("Check Info")
-		if rec.Info != r.Info {
-			t.Errorf("Records not equal:\n%#v\n%#v", r.Info, rec.Info)
-		}
-
-		t.Logf("Check Data")
-		dat, err := io.ReadAll(uio.Reader(rec))
-		if err != nil {
-			t.Errorf("Could not read %q: %v", rec.Name, err)
-		}
-
-		if !bytes.Equal(dat, contents[:r.Info.FileSize]) {
-			t.Errorf("Read(%q) = %s, want %s", rec.Name, string(dat), contents[:r.Info.FileSize])
-		}
-	}
-}
-
-func TestReadWrite(t *testing.T) {
-	r := Newc.Reader(bytes.NewReader(testCPIO))
-	files, err := ReadAllRecords(r)
-	if err != nil {
-		t.Fatalf("Reading testCPIO reader: %v", err)
-	}
-
-	buf := &bytes.Buffer{}
-	w := Newc.Writer(buf)
-	if err := WriteRecords(w, files); err != nil {
-		t.Fatalf("WriteRecords: %v", err)
-	}
-
-	if err := WriteTrailer(w); err != nil {
-		t.Fatalf("WriteTrailer: %v", err)
-	}
-
-	r = Newc.Reader(bytes.NewReader(testCPIO))
-	files, err = ReadAllRecords(r)
-	if err != nil {
-		t.Fatalf("Reading testCPIO reader: %v", err)
-	}
-
-	r = Newc.Reader(bytes.NewReader(buf.Bytes()))
-	filesReadBack, err := ReadAllRecords(r)
-	if err != nil {
-		t.Fatalf("TestReadWrite: reading generated data: %v", err)
-	}
-
-	// Now check a few things: arrays should be same length, Headers should match,
-	// names should be the same, and data should be the same. If this all works,
-	// it means we read in serialized data, wrote it out, read it in, and the
-	// structs all matched.
-	if len(files) != len(filesReadBack) {
-		t.Fatalf("[]file len from testCPIO %v and generated %v are not the same and should be", len(files), len(filesReadBack))
-	}
-	for i := range files {
-		f1 := files[i]
-		f2 := filesReadBack[i]
-
-		if f1.Info != f2.Info {
-			t.Errorf("index %d: testCPIO Info\n%v\ngenerated Info\n%v\n", i, f1.Info, f2.Info)
-		}
-
-		contents1, err := io.ReadAll(uio.Reader(f1))
-		if err != nil {
-			t.Errorf("index %d(%q): can't read from the source: %v", i, f1.Name, err)
-		}
-		contents2, err := io.ReadAll(uio.Reader(f2))
-		if err != nil {
-			t.Errorf("index %d(%q): can't read from the dest: %v", i, f2.Name, err)
-		}
-		if !bytes.Equal(contents1, contents2) {
-			t.Errorf("index %d content: file 1 (%q) is %v, file 2 (%q) wanted %v", i, f1.Name, contents1, f2.Name, contents2)
-		}
-	}
-}
-
-func TestBad(t *testing.T) {
-	r := Newc.Reader(bytes.NewReader(badCPIO))
-	if _, err := r.ReadRecord(); err != io.EOF {
-		t.Errorf("ReadRecord(badCPIO) got %v, want %v", err, io.EOF)
-	}
-
-	r = Newc.Reader(bytes.NewReader(badMagicCPIO))
-	if _, err := r.ReadRecord(); err == nil {
-		t.Errorf("Wanted bad magic err, got nil")
-	}
-}
 
 /*
 drwxrwxr-x   9 rminnich rminnich        0 Jan 22 22:18 .
@@ -551,76 +331,329 @@ var (
 	}
 )
 
-// testReproducible verifies that we can produce reproducible cpio archives for newc format.
-func TestReproducible(t *testing.T) {
-	contents := []byte("LANAAAAAAAAAA")
-	rec := []Record{
-		StaticRecord(contents, Info{
-			Ino:      1,
-			Mode:     syscall.S_IFREG | 2,
-			UID:      3,
-			GID:      4,
-			NLink:    5,
-			MTime:    6,
-			FileSize: 7,
-			Major:    8,
-			Minor:    9,
-			Rmajor:   10,
-			Rminor:   11,
-			Name:     "foobar",
-		}),
+func TestBad(t *testing.T) {
+	r := Newc.Reader(bytes.NewReader(badCPIO))
+	if _, err := r.ReadRecord(); err != io.EOF {
+		t.Errorf("ReadRecord(badCPIO) got %v, want %v", err, io.EOF)
 	}
 
-	// First test that it fails unless we make it reproducible
-
-	b1 := &bytes.Buffer{}
-	w := Newc.Writer(b1)
-	if err := WriteRecords(w, rec); err != nil {
-		t.Errorf("Could not write record %q: %v", rec[0].Name, err)
+	r = Newc.Reader(bytes.NewReader(badMagicCPIO))
+	if _, err := r.ReadRecord(); err == nil {
+		t.Errorf("Wanted bad magic err, got nil")
 	}
-	rec[0].ReaderAt = bytes.NewReader(contents)
-	b2 := &bytes.Buffer{}
-	w = Newc.Writer(b2)
-	rec[0].MTime++
-	if err := WriteRecords(w, rec); err != nil {
-		t.Errorf("Could not write record %q: %v", rec[0].Name, err)
-	}
+}
 
-	if reflect.DeepEqual(b1.Bytes()[:], b2.Bytes()[:]) {
-		t.Error("Reproducible: compared as same, wanted different")
+/*
+TODO(#935): This test should really compare against []Records, not the string
+formatted []Records.
+
+func TestSimple(t *testing.T) {
+	r := Newc.Reader(bytes.NewReader(testCPIO))
+	files, err := ReadAllRecords(r)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// Second test that it works if we make it reproducible
-	// It does indeed fail without the second call.
-
-	b1 = &bytes.Buffer{}
-	w = Newc.Writer(b1)
-	rec[0].ReaderAt = bytes.NewReader([]byte(contents))
-	MakeAllReproducible(rec)
-	if err := WriteRecords(w, rec); err != nil {
-		t.Errorf("Could not write record %q: %v", rec[0].Name, err)
+	for i, f := range files {
+		if f.String() != testResult[i] {
+			t.Errorf("Value %d: got \n%s, want \n%s", i, f.String(), testResult[i])
+		}
+		t.Logf("Value %d: got \n%s, want \n%s", i, f.String(), testResult[i])
 	}
+}
+*/
 
-	b2 = &bytes.Buffer{}
-	w = Newc.Writer(b2)
-	rec[0].MTime++
-	rec[0].ReaderAt = bytes.NewReader([]byte(contents))
-	MakeAllReproducible(rec)
-	if err := WriteRecords(w, rec); err != nil {
-		t.Errorf("Could not write record %q: %v", rec[0].Name, err)
-	}
+func FuzzWriteReadNewc(f *testing.F) {
+	var fileCount uint8 = 20
+	var content []byte = []byte("Content")
+	var name string = "name"
+	var ino, mode, uid, gid, nlink, mtime, major, minor, rmajor, rminor uint64 = 1, S_IFREG | 2, 3, 4, 5, 6, 7, 8, 9, 10
+	f.Add(fileCount, content, name, ino, mode, uid, gid, nlink, mtime, major, minor, rmajor, rminor)
+	f.Fuzz(func(t *testing.T, fileCount uint8, content []byte, name string, ino uint64, mode uint64, uid uint64, gid uint64, nlink uint64, mtime uint64, major uint64, minor uint64, rmajor uint64, rminor uint64) {
+		if len(name) > 20 || len(content) > 200 {
+			return
+		}
 
-	if len(b1.Bytes()) != len(b2.Bytes()) {
-		t.Fatalf("Reproducible \n%v,\n%v: len is different, wanted same", b1.Bytes()[:], b2.Bytes()[:])
-	}
-	if !reflect.DeepEqual(b1.Bytes()[:], b2.Bytes()[:]) {
-		t.Error("Reproducible: compared different, wanted same")
-		for i := range b1.Bytes() {
-			a := b1.Bytes()[i]
-			b := b2.Bytes()[i]
-			if a != b {
-				t.Errorf("\tb1[%d] is %v, b2[%d] is %v", i, a, i, b)
+		recs := []Record{}
+		var i uint8 = 0
+		for ; i < fileCount; i++ {
+
+			recs = append(recs, StaticRecord(content, Info{
+				Ino:      ino,
+				Mode:     syscall.S_IFREG | mode,
+				UID:      uid,
+				GID:      gid,
+				NLink:    nlink,
+				MTime:    mtime,
+				FileSize: uint64(len(content)),
+				Major:    major,
+				Minor:    minor,
+				Rmajor:   rmajor,
+				Rminor:   rminor,
+				Name:     Normalize(name) + fmt.Sprintf("%d", i),
+			}))
+		}
+
+		buf := &bytes.Buffer{}
+		w := Newc.Writer(buf)
+		for _, rec := range recs {
+			if err := w.WriteRecord(rec); err != nil {
+				t.Fatalf("Could not write record %q: %v", rec.Name, err)
 			}
 		}
-	}
+
+		if err := WriteTrailer(w); err != nil {
+			t.Fatalf("Could not write trailer: %v", err)
+		}
+
+		r := Newc.Reader(bytes.NewReader(buf.Bytes()))
+
+		for _, rec := range recs {
+			rec2, err := r.ReadRecord()
+			if err != nil {
+				t.Fatalf("Could not read record: %v", err)
+			}
+
+			if rec2.Info != rec.Info {
+				t.Fatalf("Records not equal:\n%#v\n%#v", rec.Info, rec2.Info)
+			}
+
+			readRecord, err := io.ReadAll(uio.Reader(rec2))
+			if err != nil {
+				t.Fatalf("Could not read %q: %v", rec2.Name, err)
+			}
+
+			if !bytes.Equal(readRecord, content) {
+				t.Fatalf("Read(%q) = %s, want %s", rec2.Name, string(readRecord), content)
+			}
+		}
+	})
+}
+
+func FuzzPipeWriteReadNewc(f *testing.F) {
+	var fileCount uint8 = 20
+	var content []byte = []byte("Content")
+	var name string = "name"
+	var ino, mode, uid, gid, nlink, mtime, major, minor, rmajor, rminor uint64 = 1, S_IFREG | 2, 3, 4, 5, 6, 7, 8, 9, 10
+	f.Add(fileCount, content, name, ino, mode, uid, gid, nlink, mtime, major, minor, rmajor, rminor)
+	f.Fuzz(func(t *testing.T, fileCount uint8, content []byte, name string, ino uint64, mode uint64, uid uint64, gid uint64, nlink uint64, mtime uint64, major uint64, minor uint64, rmajor uint64, rminor uint64) {
+		if len(name) > 20 || len(content) > 200 {
+			return
+		}
+
+		// N.B. It is important to have two records,
+		// it caught a problem with the first discard
+		// implementation.
+		records := []Record{}
+		var i uint8 = 0
+		for ; i < fileCount; i++ {
+
+			records = append(records, StaticRecord(content, Info{
+				Ino:      ino,
+				Mode:     syscall.S_IFREG | mode,
+				UID:      uid,
+				GID:      gid,
+				NLink:    nlink,
+				MTime:    mtime,
+				FileSize: uint64(len(content)),
+				Major:    major,
+				Minor:    minor,
+				Rmajor:   rmajor,
+				Rminor:   rminor,
+				Name:     Normalize(name) + fmt.Sprintf("%d", i),
+			}))
+		}
+
+		rp, wp, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := Newc.Writer(wp)
+		// We need a func here in case the pipe blocks the write.
+
+		for _, rec := range records {
+			if err := w.WriteRecord(rec); err != nil {
+				t.Errorf("Could not write record %q: %v", rec.Name, err)
+			}
+		}
+
+		if err := WriteTrailer(w); err != nil {
+			t.Errorf("Could not write trailer: %v", err)
+		}
+
+		// //t.Logf is not available in the fuzzing tests, hence disable it on return
+		// Debug = t.Logf
+		// defer func() { Debug = func(string, ...interface{}) {} }()
+		rdr, err := Newc.NewFileReader(rp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range records {
+			rec, err := rdr.ReadRecord()
+			if err != nil {
+				t.Fatalf("Could not read record: %v", err)
+			}
+
+			// t.Logf("Check Info")
+			if rec.Info != r.Info {
+				t.Fatalf("Records not equal:\n%#v\n%#v", r.Info, rec.Info)
+			}
+
+			// t.Logf("Check Data")
+			dat, err := io.ReadAll(uio.Reader(rec))
+			if err != nil {
+				t.Fatalf("Could not read %q: %v", rec.Name, err)
+			}
+
+			if !bytes.Equal(dat, content) {
+				t.Fatalf("Read(%q) = %s, want %s", rec.Name, string(dat), content)
+			}
+		}
+	})
+}
+
+func FuzzReadWriteNewc(f *testing.F) {
+	f.Add(testCPIO)
+	f.Fuzz(func(t *testing.T, cpio []byte) {
+		if len(cpio) > 200 {
+			return
+		}
+
+		r := Newc.Reader(bytes.NewReader(cpio))
+		files, err := ReadAllRecords(r)
+		if err != nil {
+			return
+		}
+
+		buf := &bytes.Buffer{}
+		w := Newc.Writer(buf)
+		if err := WriteRecords(w, files); err != nil {
+			t.Fatalf("WriteRecords: %v", err)
+		}
+
+		if err := WriteTrailer(w); err != nil {
+			t.Fatalf("WriteTrailer: %v", err)
+		}
+
+		r = Newc.Reader(bytes.NewReader(cpio))
+		files, err = ReadAllRecords(r)
+		if err != nil {
+			t.Fatalf("Reading cpio reader: %v", err)
+		}
+
+		r = Newc.Reader(bytes.NewReader(buf.Bytes()))
+		filesReadBack, err := ReadAllRecords(r)
+		if err != nil {
+			t.Fatalf("TestReadWrite: reading generated data: %v", err)
+		}
+
+		// Now check a few things: arrays should be same length, Headers should match,
+		// names should be the same, and data should be the same. If this all works,
+		// it means we read in serialized data, wrote it out, read it in, and the
+		// structs all matched.
+		if len(files) != len(filesReadBack) {
+			t.Fatalf("[]file len from cpio %v and generated %v are not the same and should be", len(files), len(filesReadBack))
+		}
+		for i := range files {
+			f1 := files[i]
+			f2 := filesReadBack[i]
+
+			if f1.Info != f2.Info {
+				t.Errorf("index %d: cpio Info\n%v\ngenerated Info\n%v\n", i, f1.Info, f2.Info)
+			}
+
+			contents1, err := io.ReadAll(uio.Reader(f1))
+			if err != nil {
+				t.Errorf("index %d(%q): can't read from the source: %v", i, f1.Name, err)
+			}
+			contents2, err := io.ReadAll(uio.Reader(f2))
+			if err != nil {
+				t.Errorf("index %d(%q): can't read from the dest: %v", i, f2.Name, err)
+			}
+			if !bytes.Equal(contents1, contents2) {
+				t.Errorf("index %d content: file 1 (%q) is %v, file 2 (%q) wanted %v", i, f1.Name, contents1, f2.Name, contents2)
+			}
+		}
+	})
+}
+
+// testReproducible verifies that we can produce reproducible cpio archives for newc format.
+func FuzzReproducibleNewc(f *testing.F) {
+	var content []byte = []byte("Content")
+	var name string = "name"
+	var ino, mode, uid, gid, nlink, mtime, major, minor, rmajor, rminor uint64 = 1, S_IFREG | 2, 3, 4, 5, 6, 7, 8, 9, 10
+	f.Add(content, name, ino, mode, uid, gid, nlink, mtime, major, minor, rmajor, rminor)
+	f.Fuzz(func(t *testing.T, content []byte, name string, ino uint64, mode uint64, uid uint64, gid uint64, nlink uint64, mtime uint64, major uint64, minor uint64, rmajor uint64, rminor uint64) {
+		if len(name) > 20 || len(content) > 200 {
+			return
+		}
+
+		rec := []Record{StaticRecord(content, Info{
+			Ino:      ino,
+			Mode:     syscall.S_IFREG | mode,
+			UID:      uid,
+			GID:      gid,
+			NLink:    nlink,
+			MTime:    mtime,
+			FileSize: uint64(len(content)),
+			Major:    major,
+			Minor:    minor,
+			Rmajor:   rmajor,
+			Rminor:   rminor,
+			Name:     Normalize(name),
+		})}
+
+		// First test that it fails unless we make it reproducible
+
+		b1 := &bytes.Buffer{}
+		w := Newc.Writer(b1)
+		if err := WriteRecords(w, rec); err != nil {
+			t.Errorf("Could not write record %q: %v", rec[0].Name, err)
+		}
+		rec[0].ReaderAt = bytes.NewReader(content)
+		b2 := &bytes.Buffer{}
+		w = Newc.Writer(b2)
+		rec[0].MTime++
+		if err := WriteRecords(w, rec); err != nil {
+			t.Errorf("Could not write record %q: %v", rec[0].Name, err)
+		}
+
+		if reflect.DeepEqual(b1.Bytes()[:], b2.Bytes()[:]) {
+			t.Error("Reproducible: compared as same, wanted different")
+		}
+
+		// Second test that it works if we make it reproducible
+		// It does indeed fail without the second call.
+
+		b1 = &bytes.Buffer{}
+		w = Newc.Writer(b1)
+		rec[0].ReaderAt = bytes.NewReader([]byte(content))
+		MakeAllReproducible(rec)
+		if err := WriteRecords(w, rec); err != nil {
+			t.Errorf("Could not write record %q: %v", rec[0].Name, err)
+		}
+
+		b2 = &bytes.Buffer{}
+		w = Newc.Writer(b2)
+		rec[0].MTime++
+		rec[0].ReaderAt = bytes.NewReader([]byte(content))
+		MakeAllReproducible(rec)
+		if err := WriteRecords(w, rec); err != nil {
+			t.Errorf("Could not write record %q: %v", rec[0].Name, err)
+		}
+
+		if len(b1.Bytes()) != len(b2.Bytes()) {
+			t.Fatalf("Reproducible \n%v,\n%v: len is different, wanted same", b1.Bytes()[:], b2.Bytes()[:])
+		}
+		if !reflect.DeepEqual(b1.Bytes()[:], b2.Bytes()[:]) {
+			t.Error("Reproducible: compared different, wanted same")
+			for i := range b1.Bytes() {
+				a := b1.Bytes()[i]
+				b := b2.Bytes()[i]
+				if a != b {
+					t.Errorf("\tb1[%d] is %v, b2[%d] is %v", i, a, i, b)
+				}
+			}
+		}
+	})
 }

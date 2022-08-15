@@ -51,3 +51,19 @@ func TestNormalize(t *testing.T) {
 		}
 	}
 }
+
+func FuzzNormalize(f *testing.F) {
+	f.Add("/foo/bar")
+	f.Add("@(/.")
+	f.Fuzz(func(t *testing.T, path string) {
+		Normalize(path)
+		defer paniced(t)
+	})
+}
+
+func paniced(t *testing.T) {
+	t.Helper()
+	if r := recover(); r != nil {
+		t.Fatalf("Normalizing caused a panic: %v", r)
+	}
+}
