@@ -5,6 +5,7 @@ package msr
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/u-root/u-root/pkg/testutil"
@@ -183,7 +184,7 @@ func TestTestAndSet(t *testing.T) {
 	}
 
 	// clear every set bit, set every clear bit, this should not go well.
-	if errs = r.Test(c, vals[0], ^vals[0]); errs == nil {
+	if errs = r.TestAndSet(c, vals[0], ^vals[0]); errs == nil {
 		t.Errorf("Test with bad clear/set/val 0x%#x: got nil, want err", vals[0])
 	}
 }
@@ -193,4 +194,46 @@ func TestLocked(t *testing.T) {
 	if err := Locked(); err != nil {
 		t.Logf("(warning only) Verify GenuineIntel: got %v, want nil", err)
 	}
+}
+
+func FuzzCPUParsing(f *testing.F) {
+	f.Add("0-7")
+	f.Add("1-2,4")
+	f.Add("0-2,4-7")
+	f.Add("a")
+	f.Add("*")
+	f.Add("8-2")
+	f.Fuzz(func(t *testing.T, input string) {
+		//fuzzing parseCPUs for huge values will take very long, therefore threshold inputs
+		cpuVals := strings.Split(input, "-")
+
+		for _, val := range cpuVals {
+			if len(val) > 5 {
+				return
+			}
+		}
+
+		cpus, err := parseCPUs(input)
+
+		if err != nil {
+			return
+		}
+
+		cpuString := cpus.String()
+		cpusReparsed, err := parseCPUs(cpuString)
+
+		if err != nil {
+			t.Fatalf("failed to reparse the CPUs: %v", err)
+		}
+
+		if len(cpus) != len(cpusReparsed) {
+			t.Fatalf("parsed cpus do not match: %#v, %#v", cpus, cpusReparsed)
+		}
+
+		for idx := range cpus {
+			if cpus[idx] != cpusReparsed[idx] {
+				t.Fatalf("entry %d of parse cpus does not match: %v, %v", idx, cpus[idx], cpusReparsed[idx])
+			}
+		}
+	})
 }
