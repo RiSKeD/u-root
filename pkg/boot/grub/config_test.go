@@ -6,6 +6,7 @@ package grub
 
 import (
 	"context"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,6 +133,14 @@ func FuzzParseGrubConfig(f *testing.F) {
 		Device: filepath.Join("/dev", dirPath),
 		FSType: "test",
 	})
+
+	//no log output
+	null, err := os.OpenFile("/dev/null", os.O_WRONLY, 0o200)
+	if err != nil {
+		panic(err)
+	}
+	log.SetOutput(null)
+	log.SetFlags(0)
 
 	// get seed corpora from testdata_new files
 	seeds, err := filepath.Glob("testdata_new/*/*/*/grub.cfg")
