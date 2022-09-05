@@ -6,6 +6,7 @@ package grub
 
 import (
 	"context"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -135,11 +136,7 @@ func FuzzParseGrubConfig(f *testing.F) {
 	})
 
 	//no log output
-	null, err := os.OpenFile("/dev/null", os.O_WRONLY, 0o200)
-	if err != nil {
-		panic(err)
-	}
-	log.SetOutput(null)
+	log.SetOutput(io.Discard)
 	log.SetFlags(0)
 
 	// get seed corpora from testdata_new files
@@ -167,7 +164,7 @@ func FuzzParseGrubConfig(f *testing.F) {
 		if len(data) > 1000000 {
 			return
 		}
-		
+
 		err := os.WriteFile(path, data, 0o777)
 		if err != nil {
 			t.Errorf("Failed to create configfile '%v':%v", path, err)
