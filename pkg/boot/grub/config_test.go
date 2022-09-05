@@ -164,6 +164,10 @@ func FuzzParseGrubConfig(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 1000000 {
+			return
+		}
+		
 		err := os.WriteFile(path, data, 0o777)
 		if err != nil {
 			t.Errorf("Failed to create configfile '%v':%v", path, err)
