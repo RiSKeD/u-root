@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -388,4 +389,28 @@ type testInputPrompt struct {
 
 func (i testInputPrompt) Input(prefix string, completer prompt.Completer, opts ...prompt.Option) string {
 	return i.inputText
+}
+
+func FuzzRun(f *testing.F) {
+	sh := shell{}
+	var buf bytes.Buffer
+	dirPath, err := os.MkdirTemp("", "")
+	if err != nil {
+		f.Fatalf("failed to create temporary directory for testing: %v", err)
+	}
+
+	f.Add("echo foo")
+	f.Add("exit 1")
+	f.Fuzz(func(t *testing.T, data string) {
+
+		buf.Reset()
+		runner, err := interp.New(interp.StdIO(nil, &buf, &buf))
+		runner.Dir = dirPath
+		if err != nil {
+			t.Errorf("Failed creating runner: %v", err)
+		}
+
+		_ = sh.run(runner, strings.NewReader(data), "fuzz")
+
+	})
 }
