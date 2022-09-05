@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("multiBoot 0\nmodule --nounzip")

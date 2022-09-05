@@ -110,6 +110,9 @@ func TestConfigs(t *testing.T) {
 }
 
 func FuzzParseGrubConfig(f *testing.F) {
+	wantedErrors := []string{
+		"could not parse URL: ",
+	}
 	baseDir, err := os.MkdirTemp("", "")
 	if err != nil {
 		f.Errorf("failed to create temp dir %v: %v", baseDir, err)
@@ -171,6 +174,13 @@ func FuzzParseGrubConfig(f *testing.F) {
 		}
 
 		_, err = ParseLocalConfig(context.Background(), baseDir, devices, mountPool)
-	})
 
+		if err != nil {
+			for _, wantedErr := range wantedErrors {
+				if strings.HasPrefix(err.Error(), wantedErr) {
+					return
+				}
+			}
+		}
+	})
 }
