@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("lABel 0\nAppend initrd")
