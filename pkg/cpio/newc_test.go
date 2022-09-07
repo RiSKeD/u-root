@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"syscall"
 	"testing"
@@ -513,7 +514,21 @@ func FuzzPipeWriteReadNewc(f *testing.F) {
 }
 
 func FuzzReadWriteNewc(f *testing.F) {
+
 	f.Add(testCPIO)
+	seeds, err := filepath.Glob("testdata/fuzz/corpora/*")
+	if err != nil {
+		f.Errorf("failed to find seed corpora data %v", err)
+	}
+
+	for _, seed := range seeds {
+		seedBytes, err := os.ReadFile(seed)
+		if err != nil {
+			f.Errorf("failed to read seed corpora from file %v: %v", seed, err)
+		}
+		f.Add(seedBytes)
+	}
+
 	f.Fuzz(func(t *testing.T, cpio []byte) {
 		if len(cpio) > 200 {
 			return
