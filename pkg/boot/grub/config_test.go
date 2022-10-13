@@ -181,6 +181,7 @@ func FuzzParseGrubConfig(f *testing.F) {
 					return
 				}
 			}
+			t.Errorf("unexpected error occured: %v", err)
 		}
 	})
 }
