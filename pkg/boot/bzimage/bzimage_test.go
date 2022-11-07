@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"hash/crc32"
 	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 	"unsafe"
 
@@ -345,4 +347,53 @@ func TestInitRAMFS(t *testing.T) {
 			t.Logf("Found %d byte initramfs@%d:%d", e-s, s, e)
 		})
 	}
+}
+
+func FuzzParseBzImage(f *testing.F) {
+	Debug = func(string, ...interface{}) {}
+	seeds, err := filepath.Glob("testdata/bz*")
+	if err != nil {
+		f.Fatalf("failed to read seed bzimages")
+	}
+
+	for _, seed := range seeds {
+		seedBytes, err := os.ReadFile(seed)
+		if err != nil {
+			f.Errorf("failed read seed corpora from files %v: %v", seed, err)
+		}
+		f.Add(seedBytes)
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+
+		if len(data) < 25600 {
+			return
+		}
+
+		var bzimage BzImage
+		if err := bzimage.UnmarshalBinary(data); err != nil {
+			return
+		}
+
+		binaryData, err := bzimage.MarshalBinary()
+		if err != nil {
+			t.Fatalf("failed to write parsed bzImage back as binary data: %v", err)
+		}
+
+		var reparseBzimage BzImage
+		if err := reparseBzimage.UnmarshalBinary(binaryData); err != nil {
+			t.Fatalf("failed to write parsed bzImage back as binary data: %v", err)
+		}
+
+		if !reflect.DeepEqual(bzimage.Header, reparseBzimage.Header) {
+			t.Fatalf("headers of bzImages do not match:\n%#v\n%#v", bzimage.Header, reparseBzimage.Header)
+		}
+
+		if len(bzimage.BootCode) != len(reparseBzimage.BootCode) {
+			t.Fatalf("headers of bzImages do not match:\n%#v\n%#v", bzimage.Header, reparseBzimage.Header)
+		}
+		if len(bzimage.KernelCode) != len(reparseBzimage.KernelCode) {
+			t.Fatalf("headers of bzImages do not match:\n%#v\n%#v", bzimage.Header, reparseBzimage.Header)
+		}
+	})
 }

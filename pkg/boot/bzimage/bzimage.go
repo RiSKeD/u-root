@@ -317,6 +317,9 @@ func stripSignature(image []byte) ([]byte, error) {
 	// Existing code at https://github.com/saferwall/pe might be helpful in this process.
 
 	optionalHeaderOffset := peMagicOffset + unsafe.Offsetof(peImage.OptionalHeader)
+	if optionalHeaderOffset+uintptr(peImage.COFFHeader.SizeOfOptionalHeader) > uintptr(len(d)) {
+		return nil, fmt.Errorf("optional header size is larger than expected by image size")
+	}
 	Debug("Optional header offset: 0x%x", optionalHeaderOffset)
 
 	// Zero out the PE Checksum.

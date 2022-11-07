@@ -1,0 +1,16 @@
+# libfuzzer keyword dictionary used for fuzzing bzImages
+dosMagic = "MZ"
+peMagic = "PE\x00\x00"
+opMagic1 = "\x01\x0B"
+opMagic2 = "\x02\x0B"
+gzip="\x1F\x8B"
+xz="\xFD\x37\x7A\x58\x5A\x00"
+lzma="\x5D\x00\x00"
+lz0="\x89\x4C\x5A\x4F\x00\x0D\x0A\x1A\x0A"
+zstd="\x28\xB5\x2F\xFD"
+bzip2="\x42\x5A\x68"
+lz4="\x02\x21\x4C\x18"
+headerMagic="HdrS"
+protocolVersion="\x02\x08"
+
+
